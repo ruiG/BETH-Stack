@@ -1,18 +1,9 @@
 import { Elysia, t } from "elysia";
 import { html } from "@elysiajs/html";
 import * as elements from "typed-html";
-
-type Todo = {
-  id: number;
-  content: string;
-  completed: boolean;
-};
-
-let lastID = 0;
-
-const db: Todo[] = new Array();
-db.push({ id: lastID++, content: "learn the BETH stack", completed: true });
-db.push({ id: lastID++, content: "learn vim", completed: false });
+import { db } from "./db";
+import { Todo, todos } from "./db/schema";
+import { eq } from "drizzle-orm";
 
 const app = new Elysia()
   .use(html())
@@ -28,44 +19,44 @@ const app = new Elysia()
       </BaseHTML>
     )
   )
-  .post("/clicked", () => <div class="text-blue-600">I'm from the server!</div>)
-  .get("/todos", () => <TodoList todos={db} />)
+  .get("/todos", async () => {
+    const data = await db.select().from(todos).all();
+    return <TodoList todos={data} />;
+  })
   .post(
     "/todos/:id/toggle",
-    ({ params }) => {
-      const todo = db.find((todo) => todo.id === params.id);
-      if (todo) {
-        todo.completed = !todo.completed;
-        return <TodoItem {...todo} />;
-      }
+    async ({ params }) => {
+      const oldTodo = await db
+        .select()
+        .from(todos)
+        .where(eq(todos.id, params.id))
+        .get();
+
+      const newTodo = await db
+        .update(todos)
+        .set({ completed: !oldTodo?.completed })
+        .where(eq(todos.id, params.id))
+        .returning()
+        .get();
+
+      return <TodoItem {...newTodo} />;
     },
     { params: t.Object({ id: t.Numeric() }) }
   )
   .delete(
     "/todos/:id",
-    ({ params }) => {
-      const todo = db.find((t) => {
-        console.log(t);
-        return t.id === params.id;
-      });
-      if (todo) {
-        db.splice(db.indexOf(todo), 1);
-      }
+    async ({ params }) => {
+      await db.delete(todos).where(eq(todos.id, params.id)).run();
     },
     { params: t.Object({ id: t.Numeric() }) }
   )
   .post(
     "/todos",
-    ({ body }) => {
+    async ({ body }) => {
       if (body.content.length === 0) {
         throw new Error("Content can't be empty");
       }
-      const newTodo: Todo = {
-        id: lastID++,
-        content: body.content,
-        completed: false,
-      };
-      db.push(newTodo);
+      const newTodo = await db.insert(todos).values(body).returning().get();
 
       return <TodoItem {...newTodo} />;
     },
